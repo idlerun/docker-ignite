@@ -15,10 +15,9 @@ public class Main {
         // Connect to the cluster based on Docker config options
         Ignite ignite = Ignition.start(new DockerIgniteConfig());
 
-        // Initialize a cache with the given name if requested
-        String cacheName = System.getProperty("CACHE_NAME");
-        if (cacheName != null) {
-            CacheConfiguration<Object,Object> conf = new CacheConfiguration<>(cacheName)
+        // Initialize a replicated cache with the given name if requested
+        if (System.getProperties().containsKey("INIT_REPLICATE")) {
+            CacheConfiguration<Object,Object> conf = new CacheConfiguration<>((String)null)
                     .setCacheMode(CacheMode.REPLICATED)
                     .setEvictSynchronized(true);
             ignite.getOrCreateCache(conf);

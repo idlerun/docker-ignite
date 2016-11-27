@@ -1,6 +1,7 @@
 package run.idle;
 
 import com.google.common.io.BaseEncoding;
+import org.apache.ignite.configuration.ConnectorConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.spi.communication.tcp.TcpCommunicationSpi;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
@@ -16,48 +17,52 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
+ * Create a Docker Swarm compatible configuration
  */
 public class DockerIgniteConfig extends IgniteConfiguration {
 
     private static final Logger LOG = Logger.getLogger(DockerIgniteConfig.class);
 
-    private static final int PORT = 57101;
+    private static final int DISCOVERY_PORT = 47101;
 
     public DockerIgniteConfig() {
         TcpCommunicationSpi communicationSpi = new TcpCommunicationSpi();
         TcpDiscoverySpi discoverySpi = new TcpDiscoverySpi();
-        discoverySpi.setLocalPort(PORT);
+        // single port for discovery
+        discoverySpi.setLocalPort(DISCOVERY_PORT);
+        discoverySpi.setLocalPortRange(0);
+        // disable binding port for shared memory communication (used only for same host)
+        communicationSpi.setSharedMemoryPort(-1);
 
-        String network = System.getProperty("NETWORK_PREFIX");
-        if (network != null) {
-                List<String> all = getNetworkAddresses();
-                List<String> match = all.stream()
-                        .filter(x -> x.startsWith(network))
-                        .collect(Collectors.toList());
-                Collections.reverse(match);
+        applyLocalAddress(discoverySpi, communicationSpi);
+        applyDiscoveryDns(discoverySpi, communicationSpi);
 
-                if (match.isEmpty()) {
-                    throw new RuntimeException("No matching addresses found for NETWORK_PREFIX=" + network + ", ADDRS=" + all);
-                } else {
-                    LOG.debug("Picking first of matching addresses: " + match);
-                    String addr = match.get(0);
-                    LOG.info("Set LOCAL_ADDRESS=" + addr);
-                    communicationSpi.setLocalAddress(addr);
-                    discoverySpi.setLocalAddress(addr);
-                }
+        setCommunicationSpi(communicationSpi);
+        setDiscoverySpi(discoverySpi);
+
+        ConnectorConfiguration connectorConfig = new ConnectorConfiguration();
+        // this timeout applies for memcached clients as well!
+        connectorConfig.setIdleTimeout(60 * 1000); // connection will timeout after 1 minute
+        setConnectorConfiguration(connectorConfig);
+
+        if (System.getProperties().containsKey("METRICS")) {
+            setMetricsLogFrequency(10 * 60 * 1000); // log metrics every 10 minutes
         } else {
-            LOG.warn("No -DNETWORK_PREFIX is set, so localAddress will be auto-discovered");
+            LOG.debug("Metrics disabled");
+            setMetricsLogFrequency(0);
         }
+    }
 
+    private void applyDiscoveryDns(TcpDiscoverySpi discoverySpi, TcpCommunicationSpi communicationSpi) {
         // Load the dns address, probably tasks.servname which resolves to the list of host addresses
         String dns = System.getProperty("CLUSTER_DNS");
         if (dns != null) {
             try {
                 List<String> hosts =
                         Arrays.asList(InetAddress.getAllByName(dns))
-                        .stream()
-                        .map(x -> x.getHostAddress() + ":" + PORT)
-                        .collect(Collectors.toList());
+                                .stream()
+                                .map(x -> x.getHostAddress() + ":" + DISCOVERY_PORT)
+                                .collect(Collectors.toList());
 
                 LOG.info("Set HOSTS=" + hosts);
                 TcpDiscoveryVmIpFinder ipFinder = new TcpDiscoveryVmIpFinder(true);
@@ -70,9 +75,30 @@ public class DockerIgniteConfig extends IgniteConfiguration {
             LOG.warn("No -DCLUSTER_DNS is set, so multicast will be used instead");
             discoverySpi.setIpFinder(new TcpDiscoveryMulticastIpFinder());
         }
+    }
 
-        setCommunicationSpi(communicationSpi);
-        setDiscoverySpi(discoverySpi);
+    private void applyLocalAddress(TcpDiscoverySpi discoverySpi, TcpCommunicationSpi communicationSpi) {
+        // Find a matching local address to apply
+        String network = System.getProperty("NETWORK_PREFIX");
+        if (network != null) {
+            List<String> all = getNetworkAddresses();
+            List<String> match = all.stream()
+                    .filter(x -> x.startsWith(network))
+                    .collect(Collectors.toList());
+            Collections.reverse(match);
+
+            if (match.isEmpty()) {
+                throw new RuntimeException("No matching addresses found for NETWORK_PREFIX=" + network + ", ADDRS=" + all);
+            } else {
+                LOG.debug("Picking first of matching addresses: " + match);
+                String addr = match.get(0);
+                LOG.info("Set LOCAL_ADDRESS=" + addr);
+                communicationSpi.setLocalAddress(addr);
+                discoverySpi.setLocalAddress(addr);
+            }
+        } else {
+            LOG.warn("No -DNETWORK_PREFIX is set, so localAddress will be auto-discovered");
+        }
     }
 
     /**

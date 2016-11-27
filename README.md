@@ -13,18 +13,34 @@ Apache Ignite exposes `memcached` by default on port 11211. Note that only the b
 
 See `memcached` client documentation [here](apacheignite.gridgain.org/docs/memcached-support) for details
 
-## Arguments
+## Building Java Package
+
+Service is compiled to a single executable jar (`target/ignite-1.0.jar`) by running:
+
+```bash
+mvn package
+```
+
+## Running
+
+Since the Maven `shade` plugin is used to create an executable jar, the package can be run with
+
+```
+java -jar target/ignite-1.0.jar
+```
+
+## Configuration
 
 Configuration as required by system properties (`-D`)
 
 ### Cache Init
 
-Optionally initialize a cache in full replication mode by passing the cache name as an argument.
+Optionally initialize the default cache in full replication mode by passing the cache name as an argument.
 
 This is useful to ensure the cache is configured as expected before connecting with a `memcached` client
 
 ```
--DCACHE_NAME=mycache
+-DINIT_REPLICATE
 ```
 
 ### Local Host Address
@@ -49,13 +65,6 @@ Docker Cluster provides a special DNS address `tasks.servicename` (replace `serv
 -DCLUSTER_DNS=tasks.myignite
 ```
 
-## Service Compile
-
-Service is compiled to a single executable jar (`target/ignite-1.0.jar`) by running:
-
-```bash
-mvn package
-```
 
 ## Docker Image
 
@@ -67,11 +76,34 @@ docker build -t ignite .
 
 ## Docker Service
 
+Create a Docker cluster as described in [ElasticSearch Cluster on Docker 1.12](https://idle.run/elasticsearch-cluster)
+
 ```bash
 docker service create \
   --mode global \
   --name myignite \
   --network enc-net \
+  --publish 11211:11211 \
   ignite \
-  -DNETWORK_PREFIX=10.0.9. -DCLUSTER_DNS=tasks.myignite -DCACHE_NAME=cache
+  -DNETWORK_PREFIX=10.0.9. -DCLUSTER_DNS=tasks.myignite -DINIT_REPLICATE
 ```
+
+Optionally remove `--publish` argument to restrict access to the overlay network.
+
+For testing, the image can be manually transferred to the servers as follows.
+
+*(Use a Docker registry whenever possible)*
+
+```bash
+docker save ignite > ignite.tar
+pv ignite.tar | ssh -C manager1 sudo docker load
+pv ignite.tar | ssh -C worker1 sudo docker load
+pv ignite.tar | ssh -C worker2 sudo docker load
+rm -f ignite.tar
+```
+
+## Testing
+
+The Ignite server only supports memcached binary protocol, so commands sent with `nc` won't work.
+
+Instead use the [Java Memcached Binary Test Client](https://idle.run/memcached-client)
